@@ -17,7 +17,6 @@ import random
 class stock_picking(models.Model):
     _inherit = 'stock.picking'
 
-    @api.multi
     def action_cancel(self):
         if self.picking_type_id.code == 'internal':
             if self.state == 'done' or 'confirmed':
@@ -28,12 +27,12 @@ class stock_picking(models.Model):
                     
         res = super(stock_picking, self).action_cancel()
         account_pool = self.env['account.move']
-        move_ids = account_pool.search([('ref', '=', self.name), ('state', '=', 'posted')])
-        if move_ids:
-            move_ids.sudo().button_cancel()
-            move_ids.sudo().unlink()
+        for move in self.move_ids_without_package:
+            move_ids = account_pool.search([('ref', '=', move.product_id.name), ('state', '=', 'posted')])
+            if move_ids:
+                move_ids.sudo().button_draft()
+                move_ids.sudo().button_cancel()
 
-    @api.multi
     def action_set_draft(self):
         move_obj = self.env['stock.move']
         for pick in self:
@@ -49,7 +48,6 @@ class stock_picking(models.Model):
 class stock_move(models.Model):
     _inherit = 'stock.move'
 
-    @api.multi
     def unlink_serial_number(self):
         if self.picking_type_id and self.picking_type_id.code == 'incoming':
             for line in self.move_line_ids:
@@ -57,12 +55,10 @@ class stock_move(models.Model):
                     line.lot_id.name = line.lot_id.name + '- Cancel - '+ str(random.randint(0,99999))
                     
                     
-    @api.multi
     def action_draft(self):
         res = self.write({'state': 'draft'})
         return res
 
-    @api.multi
     def dev_set_quantity(self, move_qty, stock_move):
         quant_pool = self.env['stock.quant']
         product = stock_move.product_id
@@ -130,14 +126,13 @@ class stock_move(models.Model):
                         out_qaunt[0].unlink()
                     
     
-    @api.multi
     def set_quant_quantity(self, stock_move, pack_operation_ids, pic_state):
         for pack_operation_id in pack_operation_ids:
             move_qty = stock_move.product_uom_qty
             if stock_move.quantity_done:
                 move_qty = stock_move.quantity_done
                 
-            if stock_move.quantity_done and pic_state == 'done':
+            if stock_move.quantity_done:
                 if stock_move.sale_line_id:
                     if stock_move.sale_line_id.qty_delivered >=  move_qty:
                         stock_move.sale_line_id.qty_delivered = stock_move.sale_line_id.qty_delivered - move_qty
@@ -145,12 +140,11 @@ class stock_move(models.Model):
                 if stock_move.purchase_line_id:
                     if stock_move.purchase_line_id.qty_received >= move_qty:
                         stock_move.purchase_line_id.qty_received = stock_move.purchase_line_id.qty_received - move_qty
-            
-                self.dev_set_quantity(move_qty, stock_move)
+                if stock_move.product_id.type == 'product':
+                    self.dev_set_quantity(move_qty, stock_move)
                 
         return True
 
-    @api.multi
     def _action_cancel(self):
         for move in self:
             pic_state = move.picking_id.state
@@ -158,13 +152,9 @@ class stock_move(models.Model):
                 move._do_unreserve()
                 
             siblings_states = (move.move_dest_ids.mapped('move_orig_ids') - move).mapped('state')
-            if move.propagate:
-                if all(state == 'cancel' for state in siblings_states):
-                    move.move_dest_ids._action_cancel()
-            else:
-                if all(state in ('done', 'cancel') for state in siblings_states):
-                    move.move_dest_ids.write({'procure_method': 'make_to_stock'})
-                    move.move_dest_ids.write({'move_orig_ids': [(3, move.id, 0)]})
+            if all(state in ('done', 'cancel') for state in siblings_states):
+                move.move_dest_ids.write({'procure_method': 'make_to_stock'})
+                move.move_dest_ids.write({'move_orig_ids': [(3, move.id, 0)]})
 
             if move.picking_id.state == 'done' or 'confirmed' and move.picking_id.picking_type_id.code in ['incoming','outgoing']:
                 pack_op = self.env['stock.move'].sudo().search(
