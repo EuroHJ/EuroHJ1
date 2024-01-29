@@ -1,0 +1,6 @@
+Fixed issue:
+16.0.0.1
+    ==> Fixed this validation :
+    Create new product with two unique serial number-->Update product qty with that serial no-->Create new sales order-->Add that product-->Confirm sales order-->Validate delivery order-->Try to cancel validate order but validation raised.
+    
+=> 16.0.0.2 : Improved an index as per Suggestion.
